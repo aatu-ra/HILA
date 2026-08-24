@@ -1213,7 +1213,6 @@ int main(int argc, char **argv) {
             if (p.n_dump_mom_corr) {
                 foralldir(d1) foralldir(d2) if(d1 <= d2 && d2 < NDIM - 1) {
                     std::vector<Matrix<NCOLOR, NCOLOR, Complex<ftype>>> corr;
-                    // hila::out0 << "measure_wall_wall_corr in " << d << "-dir"  << '\n';
                     measure_spat_mom_corr(S[0], d1, d2, corr);
                     for (int ic = 0; ic < av_mom_corr[d1][d2].size(); ++ic) {
                         av_mom_corr[d1][d2][ic] += corr[ic];
