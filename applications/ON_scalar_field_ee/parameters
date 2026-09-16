@@ -5,8 +5,8 @@ kappa                  0.48367003
 lambda                 0.0087726262
 source terms           0
 replica number         2
-momentum scale l       0.3
-momentum scale lc      0.4
+boundary l             1.0
+boundary lc            2.0
 alpha                  0.5
 dalpha                 0.5
 number of trajectories 10000

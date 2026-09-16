@@ -18,11 +18,11 @@ struct parameters {
     ftype lambda;       // quartic coupling (lattice definition)
     fT source;          // source terms
     int s;              // number of replicas
-    ftype l;            // momentum space entangling region slab width l
-    ftype lc;           // momentum space entangling region slab width lc
+    int l;            // bmcs corresponding to entangling region slab width l
+    int lc;           // bmcs corresponding to entangling region slab width lc
     ftype alpha;        // interpolation parameter between l and lc
     ftype dalpha;
-    ftype bcms;
+    int bcms;
     int n_traj;         // number of trajectories to generate
     int n_therm;        // number of thermalization trajectories (counts only accepted traj.)
     int n_heatbath;     // number of heat-bath sweeps per "trajectory"
@@ -167,7 +167,6 @@ template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direction &d, const Parity &par,
                      bool both_dirs, out_only Field<T> &Sd, const parameters &p) {
     // pull fields from neighboring sites in d-direction, using different nn-topologies depending on local value of field bcmsid[X]
-    // (was used only for testing)
     if (both_dirs) {
         S[1].start_gather(-d, par);
         S[0].start_gather(-d, par);
@@ -262,7 +261,7 @@ template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void move_filtered(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direction &d,
                    const Parity &par, bool both_dirs, out_only Field<T> &Sd, const parameters &p) {
     if (p.s > 1) {
-        move_filtered_k(S, bcmsid, d, par, both_dirs, Sd, p);
+        move_filtered_p(S, bcmsid, d, par, both_dirs, Sd, p);
     } else {
         if (both_dirs) {
             S[0].start_gather(-d, par);
@@ -301,7 +300,7 @@ void ON_heatbath(T &S, const T &nnsum, atype kappa, atype lambda, const T &sourc
 
 
 /**
- * @brief Wrapper function to updated O(N) scalar field per paraity
+ * @brief Wrapper function to updated O(N) scalar field per parity
  * @details --
  *
  * @tparam T field type
@@ -948,6 +947,13 @@ CoordinateVector bcms_coordinates(bT bcms, const Field<bT> &bcmsid) {
     return cres;
 }
 
+int bcms_from_l(ftype tl) {
+    // Convert a real slab width to the corresponding number of spatial sites in
+    // the entangling region.  The slab grows first in x and then through the
+    // remaining spatial coordinates within the partially filled x-slice.
+    return (int)((tl*(1.0+std::numeric_limits<ftype>::epsilon()))*(lattice.volume()/(lattice.size(0)*lattice.size(NDIM-1))));
+}
+
 
 int main(int argc, char **argv) {
 
@@ -985,10 +991,10 @@ int main(int argc, char **argv) {
     p.source = par.get("source terms");
     // number of replicas
     p.s = par.get("replica number");
-    // momentum space entangling region (sphere) radius for alpha=0
-    p.l = par.get("momentum scale l");
-    // momentum space entangling region (sphere) radius for alpha=1
-    p.lc = par.get("momentum scale lc");
+    // entangling region width for alpha=0
+    p.l = bcms_from_l(par.get("boundary l"));
+    // entangling region width for alpha=1
+    p.lc = bcms_from_l(par.get("boundary lc"));
     // interpolation parameter
     p.alpha = par.get("alpha");
     // interpolation parameter
@@ -1044,13 +1050,15 @@ int main(int argc, char **argv) {
     bcmsid.set_nn_topo(1); // full e_t-periodicity (doesn't really matter, thought, since bcmsid is
                            // the same on all time slices)
     onsites(ALL) {
-        auto k = X.coordinates().convert_to_k();
-        ftype sknorm = 0;
-        for (int d = 0; d < NDIM - 1; ++d) {
-            sknorm += (ftype)k[d] * (ftype)k[d];
+        auto k = X.coordinates();
+        int tempbcmsid = 0;
+        int idfactor=1;
+        for (int d = 1; d < NDIM - 1; ++d) {
+            tempbcmsid += k[d]*idfactor;
+            idfactor*=lattice.size(d);
         }
-        sknorm = sqrt(sknorm);
-        bcmsid[X] = sknorm;
+        tempbcmsid+=k[0]*idfactor;
+        bcmsid[X] = tempbcmsid;
     }
 
     std::string output_fname = string_format("O%d", NCOLOR);
