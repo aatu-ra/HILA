@@ -165,23 +165,36 @@ template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direction &d, const Parity &par,
                      bool both_dirs, out_only Field<T> &Sd, const parameters &p) {
     // pull fields from neighboring sites in d-direction, using different nn-topologies depending on local value of field bcmsid[X]
+    // Values are stored in Sd field. This is only done for sites of parity par. both_dirs tells whether negative sites are included.
+
+    // If bcmsid<=l, the site is always in region A. If If bcmsid>lc, the site is always in region B.
+    // If l<bcmsid<=lc, the site is in the interpolating region. Then one gets contributions from both topologies
+    // multiplied by alpha and 1-alpha for A and B respectively.
     if (both_dirs) {
         S[1].start_gather(-d, par);
         S[0].start_gather(-d, par);
     }
     onsites(par) {
-        if (bcmsid[X] <= p.bcms) {
+        if (bcmsid[X] <= p.l) {
             Sd[X] = S[1][X + d];
         } else {
-            Sd[X] = S[0][X + d];
+            if (bcmsid[X] <= p.lc) {
+                Sd[X]=p.alpha*S[1][X+d]+(1.0-p.alpha)*S[0][X+d];
+            } else {
+                Sd[X] = S[0][X + d];
+            }
         }
     }
     if (both_dirs) {
         onsites(par) {
-            if (bcmsid[X] <= p.bcms) {
-                Sd[X] += S[1][X - d];
+            if (bcmsid[X] <= p.l) {
+                Sd[X] = S[1][X - d];
             } else {
-                Sd[X] += S[0][X - d];
+                if (bcmsid[X] <= p.lc) {
+                    Sd[X]=p.alpha*S[1][X-d]+(1.0-p.alpha)*S[0][X-d];
+                } else {
+                    Sd[X] = S[0][X - d];
+                }
             }
         }
     }
@@ -423,52 +436,23 @@ double measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const paramete
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 double measure_ds_dalpha(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
-    // define direction in which Fourier transform should be taken
-    CoordinateVector fftdirs;
-    foralldir(d) if (d < NDIM - 1) fftdirs[d] = 1;
-    fftdirs[NDIM - 1] = 0;
-
+    // compute ds/daplha which reduces to S(lc)-S(l)
+    // Only the nn terms change and of them only the time direction ones in the interval between l and lc.
     Reduction<double> ds = 0;
     ds.allreduce(false).delayed(true);
     Field<T> Sd;
-
-    Field<Complex<atype>> tS, tSK;
-    Field<Complex<atype>> SK[2];
-    SK[0] = 0;
-    SK[1].make_ref_to(SK[0], 1);
-    double svol = lattice.volume() / lattice.size(NDIM - 1);
     Sd = 0;
-
-    // hopping terms in direction d
     Direction d = Direction(NDIM - 1);
-
-    for (int inc = 0; inc < T::size(); inc += 2) {
-        onsites(ALL) {
-            T tvec = S[0][X];
-            if (inc + 1 < T::size()) {
-                tS[X] = Complex<atype>(tvec[inc], tvec[inc + 1]);
-            } else {
-                tS[X] = Complex<atype>(tvec[inc], 0);
-            }
-        }
-        tS.FFT(fftdirs, SK[0]);
-        onsites(ALL) {
-            if (bcmsid[X] > p.l && bcmsid[X] <= p.lc) {
-                tSK[X] = SK[1][X + d] - SK[0][X + d];
-            } else {
-                tSK[X] = 0;
-            }
-        }
-        tSK.FFT(fftdirs, tS, fft_direction::back);
-        onsites(ALL) {
-            Complex<atype> tc = tS[X] / svol;
-            Sd[X][inc] = tc.real();
-            if (inc + 1 < T::size()) {
-                Sd[X][inc + 1] = tc.imag();
-            }
+    // Compute the change in the contributing nn terms. At lc they are in region A, at l they are in B
+    // Values are stored in the Sd field
+    onsites(ALL) {
+        if (bcmsid[X] > p.l && bcmsid[X] <= p.lc) {
+            Sd[X] = S[1][X + d] - S[0][X + d];
+        } else {
+            Sd[X] = 0;
         }
     }
-
+    // Multiply Sd by kappa and phix, and sum contributions together.
     onsites(ALL) {
         ds += -p.kappa * S[0][X].dot(Sd[X]);
     }
