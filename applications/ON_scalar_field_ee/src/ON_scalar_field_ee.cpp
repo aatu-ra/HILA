@@ -22,14 +22,12 @@ struct parameters {
     int lc;           // bmcs corresponding to entangling region slab width lc
     ftype alpha;        // interpolation parameter between l and lc
     ftype dalpha;
-    int bcms;
     int n_traj;         // number of trajectories to generate
     int n_therm;        // number of thermalization trajectories (counts only accepted traj.)
     int n_heatbath;     // number of heat-bath sweeps per "trajectory"
     int n_multhits;     // number of corrected heat-bath hits per update
     int n_interp_steps; // number of interpolation steps to change alpha from 0 to 1
     int n_dump_corr;    // number of trajectories between correlator and condensate dumps
-    int n_dump_mom_corr;// number of trajectories between momentum mode correlator dumps
     int n_dump_config;  // number of trajectories between config. dumps
     int n_save;         // number of trajectories between config. check point
     std::string config_file;
@@ -999,7 +997,6 @@ int main(int argc, char **argv) {
     p.alpha = par.get("alpha");
     // interpolation parameter
     p.dalpha = par.get("dalpha");
-    p.bcms = -1;
     // number of trajectories
     p.n_traj = par.get("number of trajectories");
     // number of heat-bath (HB) sweeps per trajectory
@@ -1012,8 +1009,6 @@ int main(int argc, char **argv) {
     p.n_interp_steps = par.get("interpolation steps");
     // number of trajectories per correlator dump
     p.n_dump_corr = par.get("trajs/corr dump");
-    // number of trajectories per momentum correlator dump
-    p.n_dump_mom_corr = par.get("trajs/mom corr dump");
     // number of trajectories per configuration dump
     p.n_dump_config = par.get("trajs/config dump");
     // random seed = 0 -> get seed from time
@@ -1050,6 +1045,9 @@ int main(int argc, char **argv) {
     bcmsid.set_nn_topo(1); // full e_t-periodicity (doesn't really matter, thought, since bcmsid is
                            // the same on all time slices)
     onsites(ALL) {
+        // Define bcmsid for each site. It is defined so that it increases first in the y direction, then in the z directions
+        // and lastly in the x direction.
+        // As a concrete example, bcmsid is given by y+z*Ny+x*Ny*Nz for d=4. Generalized to other d.
         auto k = X.coordinates();
         int tempbcmsid = 0;
         int idfactor=1;
@@ -1108,19 +1106,6 @@ int main(int argc, char **argv) {
         }
     }
 
-    std::string mom_corr_output_fname[NDIM][NDIM];
-    std::vector<Matrix<NCOLOR, NCOLOR, Complex<ftype>>> av_mom_corr[NDIM][NDIM];
-    foralldir(d1) foralldir(d2) if (d1 <= d2 && d2 < NDIM - 1) {
-        mom_corr_output_fname[d1][d2] = output_fname + string_format("_mom_corr_d%d%d.bout", (int)d1, (int)d2);
-        if (hila::myrank() == 0) {
-            av_mom_corr[d1][d2].resize((lattice.size(NDIM - 1) * (lattice.size(NDIM - 1) + 1)) / 2 *
-                                       lattice.size(d1) / 2 * lattice.size(d2));
-            for (int ic = 0; ic < av_mom_corr[d1][d2].size(); ++ic) {
-                av_mom_corr[d1][d2][ic] = 0;
-            }
-        }
-    }
-
     // use negative trajectory for thermal
     int start_traj = -p.n_therm;
 
@@ -1139,7 +1124,6 @@ int main(int argc, char **argv) {
     double act_old, act_new, s_old, s_new;
     bool first = true;
     bool first_corr = true;
-    bool first_mom_corr = true;
     for (int trajectory = start_traj; trajectory <= p.n_traj; ++trajectory) {
 
         ftype ttime = hila::gettime();
@@ -1217,30 +1201,7 @@ int main(int argc, char **argv) {
                     }
                     first_corr = false;
                 }
-            }
-            if (p.n_dump_mom_corr) {
-                foralldir(d1) foralldir(d2) if(d1 <= d2 && d2 < NDIM - 1) {
-                    std::vector<Matrix<NCOLOR, NCOLOR, Complex<ftype>>> corr;
-                    measure_spat_mom_corr(S[0], d1, d2, corr);
-                    for (int ic = 0; ic < av_mom_corr[d1][d2].size(); ++ic) {
-                        av_mom_corr[d1][d2][ic] += corr[ic];
-                    }
-                }
-                if ((trajectory + 1) % p.n_dump_mom_corr == 0) {
-                    int icdump = (trajectory + 1) / p.n_dump_mom_corr;
-                    foralldir(d1) foralldir(d2) if(d1 <= d2 && d2 < NDIM -1) {
-                        for (int ic = 0; ic < av_mom_corr[d1][d2].size(); ++ic) {
-                            av_mom_corr[d1][d2][ic] /= p.n_dump_mom_corr;
-                        }
-                        bwrite_to_file(mom_corr_output_fname[d1][d2], av_mom_corr[d1][d2], p, icdump, first_mom_corr);
-                        for (int ic = 0; ic < av_mom_corr[d1][d2].size(); ++ic) {
-                            av_mom_corr[d1][d2][ic] = 0;
-                        }
-                    }
-                    first_mom_corr = false;
-                }
-            }
-            
+            }   
         }
 
         hila::out0 << "Measure_end " << trajectory << '\n';

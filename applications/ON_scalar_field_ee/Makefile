@@ -31,9 +31,6 @@ HILAPP_OPTS += -check-init
 
 APP_OPTS += -DNDIM=${NDIM} -DNCOLOR=${NCOL} -DGENGATHER
 
-ifdef SUN_OVERRELAX_dFJ
-APP_OPTS += -DSUN_OVERRELAX_dFJ
-endif
 
 # With multiple targets we want to use "make target", not "make build/target".
 # This is needed to carry the dependencies to build-subdir

@@ -15,7 +15,6 @@ number of hb hits      10
 thermalization trajs   500
 interpolation steps    200
 trajs/corr dump        500
-trajs/mom corr dump    0
 trajs/config dump      500
 random seed            0
 trajs/saved            500
