@@ -323,7 +323,7 @@ void ON_heatbath(T &S, const T &nnsum, atype kappa, atype lambda, const T &sourc
  * @param tpar temporal parity
  */
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
-void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters &p, Parity par, int tpar) {
+void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters &p, Parity par) {
 
     static hila::timer hb_timer("Heatbath");
 
@@ -344,10 +344,8 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
     hb_timer.start();
     Direction td = Direction(NDIM - 1);
     onsites(par) {
-        if(X.coordinate(td) % 2 == tpar) {
-            for (int i = 0; i < p.n_multhits; ++i) {
-                ON_heatbath(S[0][X], nnsum[X], p.kappa, p.lambda, p.source);
-            }
+        for (int i = 0; i < p.n_multhits; ++i) {
+            ON_heatbath(S[0][X], nnsum[X], p.kappa, p.lambda, p.source);
         }
     }
 
@@ -366,21 +364,17 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
  */
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void hb_update(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
-    std::array<int, 4> rnarr;
-    for (int i = 0; i < 4; ++i) {
+    std::array<int, 2> rnarr;
+    for (int i = 0; i < 2; ++i) {
         // randomly choose a spatial and a time slice parity:
-        rnarr[i] = (int)(hila::random() * 4);
+        rnarr[i] = (int)(hila::random() * 2);
     }
     hila::broadcast(rnarr);
 
     for (int i = 0; i < 4; ++i) {
-        int tdp = rnarr[i];
-
-        int ttpar = tdp / 2;
-        int tspar = 1 + (tdp % 2);
-
+        int tpar = rnarr[i];
         // perform the selected updates:
-        hb_update_parity(S, bcmsid, p, Parity(tspar), ttpar);
+        hb_update_parity(S, bcmsid, p, Parity(tpar));
     }
 }
 
