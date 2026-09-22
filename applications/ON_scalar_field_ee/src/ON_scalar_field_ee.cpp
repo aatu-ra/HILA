@@ -326,7 +326,6 @@ template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters &p, Parity par) {
 
     static hila::timer hb_timer("Heatbath");
-
     Field<T> Sd, nnsum = 0;
 
     foralldir(d) {
@@ -340,7 +339,6 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
             onsites(par) nnsum[X] += Sd[X];
         }
     }
-
     hb_timer.start();
     Direction td = Direction(NDIM - 1);
     onsites(par) {
@@ -371,8 +369,8 @@ void hb_update(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
     }
     hila::broadcast(rnarr);
 
-    for (int i = 0; i < 4; ++i) {
-        int tpar = rnarr[i];
+    for (int i = 0; i < 2; ++i) {
+        int tpar = 1+rnarr[i];
         // perform the selected updates:
         hb_update_parity(S, bcmsid, p, Parity(tpar));
     }
@@ -953,6 +951,7 @@ int main(int argc, char **argv) {
     // see file "input.h" for documentation
 
     parameters p;
+    int tl,tlc;
 
     hila::input par("parameters");
 
@@ -968,9 +967,9 @@ int main(int argc, char **argv) {
     // number of replicas
     p.s = par.get("replica number");
     // entangling region width for alpha=0
-    p.l = bcms_from_l(par.get("boundary l"));
+    tl=par.get("boundary l");
     // entangling region width for alpha=1
-    p.lc = bcms_from_l(par.get("boundary lc"));
+    tlc=par.get("boundary lc");
     // interpolation parameter
     p.alpha = par.get("alpha");
     // interpolation parameter
@@ -1013,7 +1012,8 @@ int main(int argc, char **argv) {
 
     // set up the lattice
     lattice.setup(lsize);
-
+    p.l = bcms_from_l(tl);
+    p.lc = bcms_from_l(tlc);
     // We need random number here
     hila::seed_random(seed);
 
