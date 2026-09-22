@@ -271,6 +271,9 @@ void move_filtered_k(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void move_filtered(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direction &d,
                    const Parity &par, bool both_dirs, out_only Field<T> &Sd, const parameters &p) {
+    // pull fields from neighboring sites in d-direction. The results are stored in the Sd field.
+    // Used in computing the action etc.
+    // Takes into account the replica boundary conditions if s>1.
     if (p.s > 1) {
         move_filtered_p(S, bcmsid, d, par, both_dirs, Sd, p);
     } else {
@@ -664,24 +667,25 @@ template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void do_interp_hb_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p,
                              int interp_dir, out_only atype &ds) {
 
-
+    // Function for the non-equilibrium interpolation
     static hila::timer hbbc_timer("HBBC (update)");
     hbbc_timer.start();
 
     atype dalpha = p.dalpha / p.n_interp_steps; // step size of interpolating parameter
     atype alpha0 = p.alpha;
+    // Figure out in which direction alpha is changed
     if (interp_dir == 0) {
         dalpha = 0;
     } else if (interp_dir < 0) {
         dalpha = -dalpha;
     }
-
+    // Perform evolution
     ds = 0;
     for (int n = 1; n < p.n_interp_steps; ++n) {
         ds += measure_ds_dalpha(S, bcmsid, p); // work done during n-th interpolation step
-        p.alpha = alpha0 + n * dalpha;
+        p.alpha = alpha0 + n * dalpha; // Update alpha
 
-        hb_update(S, bcmsid, p);
+        hb_update(S, bcmsid, p); // Perform heatbath update
 
     }
     ds += measure_ds_dalpha(S, bcmsid, p); // work done during last interpolation step
@@ -694,14 +698,17 @@ void do_interp_hb_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid, paramete
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void do_hbbc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p, std::vector<atype> &ds, bool output = false) {
+    // Performs the non-equilibrium updates used to measure the ratio of partition functions used to evaluate the ratio of partition functions
+    // Z(lc)/Z(l)
 
+    //Store the original value of alpha. alpha is updated during the evolution and restored to its original value after the evolution.
     auto alpha = p.alpha;
 
 
     ds.resize(2);
     ds[0] = 0;
     ds[1] = 0;
-
+    // original value of the field is also stored.
     Field<T> S_old = S[0];
 
     static bool first = true;
@@ -716,6 +723,7 @@ void do_hbbc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p, s
     ftype ttime = hila::gettime();
     int ipdir;
     if (p.alpha == 0) {
+        // do evolution from alpha=0 to alpha=1 ie. l to lc
         ipdir = 1;
         do_interp_hb_trajectory(S, bcmsid, p, ipdir, ds[0]);
         if (output) {
@@ -723,6 +731,7 @@ void do_hbbc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p, s
                                         hila::gettime() - ttime);
         }
     } else if (p.alpha == 1) {
+        // do evolution from alpha=1 to alpha=0 ie. lc to l
         ipdir = -1;
         do_interp_hb_trajectory(S, bcmsid, p, ipdir, ds[1]);
         if (output) {
@@ -730,6 +739,8 @@ void do_hbbc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p, s
                                         hila::gettime() - ttime);
         }
     } else {
+        // do two evolutions. one from alpha=0.5 to alpha=1 ie. towards lc and another from alpha=0.5 to alpha=0 ie. towards l
+        // The field is restored to its original value in between.
         p.alpha = 0.5;
         ipdir = 1;
         do_interp_hb_trajectory(S, bcmsid, p, ipdir, ds[0]);
@@ -748,7 +759,7 @@ void do_hbbc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p, s
                                         hila::gettime() - ttime);
         }
     }
-
+    // Restore the field and alpha to their original values
     S[0] = S_old;
     p.alpha = alpha;
 }
@@ -922,7 +933,7 @@ CoordinateVector bcms_coordinates(bT bcms, const Field<bT> &bcmsid) {
 }
 
 int bcms_from_l(ftype tl) {
-    // Convert a real slab width to the corresponding number of spatial sites in
+    // Convert a slab width l to the corresponding number of spatial sites in
     // the entangling region.  The slab grows first in x and then through the
     // remaining spatial coordinates within the partially filled x-slice.
     return (int)((tl*(1.0+std::numeric_limits<ftype>::epsilon()))*(lattice.volume()/(lattice.size(0)*lattice.size(NDIM-1))));
@@ -1012,6 +1023,7 @@ int main(int argc, char **argv) {
 
     // set up the lattice
     lattice.setup(lsize);
+    // Now that the lattize has been set up, the ls can be converted to bcms.
     p.l = bcms_from_l(tl);
     p.lc = bcms_from_l(tlc);
     // We need random number here
