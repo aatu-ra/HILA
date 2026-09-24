@@ -963,7 +963,7 @@ int main(int argc, char **argv) {
     // see file "input.h" for documentation
 
     parameters p;
-    int tl,tlc;
+    ftype tl,tlc;
 
     hila::input par("parameters");
 
