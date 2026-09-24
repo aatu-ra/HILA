@@ -300,6 +300,7 @@ void move_filtered(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direct
 
 template <typename T, typename atype = hila::arithmetic_type<T>>
 void ON_heatbath(T &S, const T &nnsum, atype kappa, atype lambda, const T &source) {
+    // Heatbath function for the N-component scalar field at a specific site.
     T Sn = 0;
     atype vari = 1.0 / sqrt(2.0);
     Sn.gaussian_random(vari);
@@ -330,7 +331,7 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
 
     static hila::timer hb_timer("Heatbath");
     Field<T> Sd, nnsum = 0;
-
+    //Compute the nnsum. For the time direction the non-standard nn topologies are taken into account
     foralldir(d) {
         if (d < NDIM - 1) {
             S[0].start_gather(-d);
@@ -343,7 +344,7 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
         }
     }
     hb_timer.start();
-    Direction td = Direction(NDIM - 1);
+    // With the obtained nnsum the update is performed
     onsites(par) {
         for (int i = 0; i < p.n_multhits; ++i) {
             ON_heatbath(S[0][X], nnsum[X], p.kappa, p.lambda, p.source);
@@ -367,7 +368,7 @@ template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void hb_update(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
     std::array<int, 2> rnarr;
     for (int i = 0; i < 2; ++i) {
-        // randomly choose a spatial and a time slice parity:
+        // randomly choose a parity:
         rnarr[i] = (int)(hila::random() * 2);
     }
     hila::broadcast(rnarr);
