@@ -59,21 +59,21 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // sizeof(T),
                 // sizeof(atype),
                 // p.s,
+                // p.l,
+                // p.lc,
                 // p.kappa,
                 // p.lambda,
                 // p.source(0), ..., p.source(NCOLOR -1),
-                // p.l,
-                // p.lc,
                 // p.alpha,
                 // p.dalpha
                 //
-                int64_t *ibuff = (int64_t *)memalloc((NDIM + 7) * sizeof(int64_t));
-                ifile.read((char *)ibuff, (NDIM + 7) * sizeof(int64_t));
-                ofile.write((char *)ibuff, (NDIM + 7) * sizeof(int64_t));
+                int64_t *ibuff = (int64_t *)memalloc((NDIM + 9) * sizeof(int64_t));
+                ifile.read((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
+                ofile.write((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
 
-                double *fbuff = (double *)memalloc((NCOLOR + 6) * sizeof(double));
-                ifile.read((char *)fbuff, (NCOLOR + 6) * sizeof(double));
-                ofile.write((char *)fbuff, (NCOLOR + 6) * sizeof(double));
+                double *fbuff = (double *)memalloc((NCOLOR + 4) * sizeof(double));
+                ifile.read((char *)fbuff, (NCOLOR + 4) * sizeof(double));
+                ofile.write((char *)fbuff, (NCOLOR + 4) * sizeof(double));
 
                 int buffsize = dat.size() * sizeof(T);
                 atype *buffer = (atype *)memalloc(buffsize);
@@ -105,16 +105,16 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // sizeof(T),
                 // sizeof(atype),
                 // p.s,
+                // p.l,
+                // p.lc,
                 // p.kappa,
                 // p.lambda,
                 // p.source(0), ..., p.source(NCOLOR -1),
-                // p.l,
-                // p.lc,
                 // p.alpha,
                 // p.dalpha
                 //
                 ofile.open(fname, std::ios::out | std::ios::binary);
-                int64_t *ibuff = (int64_t *)memalloc((NDIM + 7) * sizeof(int64_t));
+                int64_t *ibuff = (int64_t *)memalloc((NDIM + 9) * sizeof(int64_t));
                 ibuff[0] = NCOLOR;
                 ibuff[1] = NDIM;
                 foralldir(d) {
@@ -125,19 +125,19 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 ibuff[NDIM + 4] = sizeof(T);
                 ibuff[NDIM + 5] = sizeof(atype);
                 ibuff[NDIM + 6] = p.s;
-                ofile.write((char *)ibuff, (NDIM + 7) * sizeof(int64_t));
+                ibuff[NDIM+7]=p.l;
+                ibuff[NDIM+8]=p.lc;
+                ofile.write((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
 
-                double *fbuff = (double *)memalloc((NCOLOR + 6) * sizeof(double));
+                double *fbuff = (double *)memalloc((NCOLOR + 4) * sizeof(double));
                 fbuff[0] = p.kappa;
                 fbuff[1] = p.lambda;
                 for (int ic = 0; ic < NCOLOR; ++ic) {
                     fbuff[2 + ic] = p.source[ic];
                 }
-                fbuff[NCOLOR + 2] = p.l;
-                fbuff[NCOLOR + 3] = p.lc;
-                fbuff[NCOLOR + 4] = p.alpha;
-                fbuff[NCOLOR + 5] = p.dalpha;
-                ofile.write((char *)fbuff, (NCOLOR + 6) * sizeof(double));
+                fbuff[NCOLOR + 2] = p.alpha;
+                fbuff[NCOLOR + 3] = p.dalpha;
+                ofile.write((char *)fbuff, (NCOLOR + 4) * sizeof(double));
 
 
                 ofile.close();
@@ -1062,8 +1062,8 @@ int main(int argc, char **argv) {
         output_fname += string_format("_%.6f", p.source[ic]);
     }
     output_fname += string_format("_r%d", p.s);
-    output_fname += string_format("_l%.6f", p.l);
-    output_fname += string_format("_lc%.6f", p.lc);
+    output_fname += string_format("_l%.6f", tl);
+    output_fname += string_format("_lc%.6f", tlc);
 
     std::string ds_output_fname = output_fname + "_ds.bout";
 
