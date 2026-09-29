@@ -18,8 +18,8 @@ struct parameters {
     ftype lambda;       // quartic coupling (lattice definition)
     fT source;          // source terms
     int s;              // number of replicas
-    int l;            // bmcs corresponding to entangling region slab width l
-    int lc;           // bmcs corresponding to entangling region slab width lc
+    int bcms_min;            // bmcs corresponding to entangling region slab width l
+    int bcms_max;           // bmcs corresponding to entangling region slab width lc
     ftype alpha;        // interpolation parameter between l and lc
     ftype dalpha;
     int n_traj;         // number of trajectories to generate
@@ -59,8 +59,8 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // sizeof(T),
                 // sizeof(atype),
                 // p.s,
-                // p.l,
-                // p.lc,
+                // p.bcms_min,
+                // p.bcms_max,
                 // p.kappa,
                 // p.lambda,
                 // p.source(0), ..., p.source(NCOLOR -1),
@@ -105,8 +105,8 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // sizeof(T),
                 // sizeof(atype),
                 // p.s,
-                // p.l,
-                // p.lc,
+                // p.bcms_min,
+                // p.bcms_max,
                 // p.kappa,
                 // p.lambda,
                 // p.source(0), ..., p.source(NCOLOR -1),
@@ -125,8 +125,8 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 ibuff[NDIM + 4] = sizeof(T);
                 ibuff[NDIM + 5] = sizeof(atype);
                 ibuff[NDIM + 6] = p.s;
-                ibuff[NDIM+7]=p.l;
-                ibuff[NDIM+8]=p.lc;
+                ibuff[NDIM+7]=p.bcms_min;
+                ibuff[NDIM+8]=p.bcms_max;
                 ofile.write((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
 
                 double *fbuff = (double *)memalloc((NCOLOR + 4) * sizeof(double));
@@ -175,10 +175,10 @@ void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
         S[0].start_gather(-d, par);
     }
     onsites(par) {
-        if (bcmsid[X] <= p.l) {
+        if (bcmsid[X] <= p.bcms_min) {
             Sd[X] = S[1][X + d];
         } else {
-            if (bcmsid[X] <= p.lc) {
+            if (bcmsid[X] <= p.bcms_max) {
                 Sd[X]=p.alpha*S[1][X+d]+(1.0-p.alpha)*S[0][X+d];
             } else {
                 Sd[X] = S[0][X + d];
@@ -187,10 +187,10 @@ void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
     }
     if (both_dirs) {
         onsites(par) {
-            if (bcmsid[X] <= p.l) {
+            if (bcmsid[X] <= p.bcms_min) {
                 Sd[X] = S[1][X - d];
             } else {
-                if (bcmsid[X] <= p.lc) {
+                if (bcmsid[X] <= p.bcms_max) {
                     Sd[X]=p.alpha*S[1][X-d]+(1.0-p.alpha)*S[0][X-d];
                 } else {
                     Sd[X] = S[0][X - d];
@@ -233,10 +233,10 @@ void move_filtered_k(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
             SK[0].start_gather(-d);
         }
         onsites(ALL) {
-            if (bcmsid[X] <= p.l) {
+            if (bcmsid[X] <= p.bcms_min) {
                 tSK[X] = SK[1][X + d];
             } else {
-                if (bcmsid[X] <= p.lc) {
+                if (bcmsid[X] <= p.bcms_max) {
                     tSK[X] = p.alpha * SK[1][X + d] + (1.0 - p.alpha) * SK[0][X + d];
                 } else {
                     tSK[X] = SK[0][X + d];
@@ -245,10 +245,10 @@ void move_filtered_k(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
         }
         if(both_dirs) {
             onsites(ALL) {
-                if (bcmsid[X] <= p.l) {
+                if (bcmsid[X] <= p.bcms_min) {
                     tSK[X] += SK[1][X - d];
                 } else {
-                    if (bcmsid[X] <= p.lc) {
+                    if (bcmsid[X] <= p.bcms_max) {
                         tSK[X] += p.alpha * SK[1][X - d] + (1.0 - p.alpha) * SK[0][X - d];
                     } else {
                         tSK[X] += SK[0][X - d];
@@ -442,7 +442,7 @@ double measure_ds_dalpha(const Field<T> (&S)[2], const Field<pT> &bcmsid, const 
     // Compute the change in the contributing nn terms. At lc they are in region A, at l they are in B
     // Values are stored in the Sd field
     onsites(ALL) {
-        if (bcmsid[X] > p.l && bcmsid[X] <= p.lc) {
+        if (bcmsid[X] > p.bcms_min && bcmsid[X] <= p.bcms_max) {
             Sd[X] = S[1][X + d] - S[0][X + d];
         } else {
             Sd[X] = 0;
@@ -1025,8 +1025,8 @@ int main(int argc, char **argv) {
     // set up the lattice
     lattice.setup(lsize);
     // Now that the lattize has been set up, the ls can be converted to bcms.
-    p.l = bcms_from_l(tl);
-    p.lc = bcms_from_l(tlc);
+    p.bcms_min = bcms_from_l(tl);
+    p.bcms_max = bcms_from_l(tlc);
     // We need random number here
     hila::seed_random(seed);
 
