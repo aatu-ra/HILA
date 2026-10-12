@@ -175,10 +175,10 @@ void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
         S[0].start_gather(-d, par);
     }
     onsites(par) {
-        if (bcmsid[X] <= p.bcms_min) {
+        if (bcmsid[X] < p.bcms_min) {
             Sd[X] = S[1][X + d];
         } else {
-            if (bcmsid[X] <= p.bcms_max) {
+            if (bcmsid[X] < p.bcms_max) {
                 Sd[X]=p.alpha*S[1][X+d]+(1.0-p.alpha)*S[0][X+d];
             } else {
                 Sd[X] = S[0][X + d];
@@ -187,10 +187,10 @@ void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
     }
     if (both_dirs) {
         onsites(par) {
-            if (bcmsid[X] <= p.bcms_min) {
+            if (bcmsid[X] < p.bcms_min) {
                 Sd[X] = S[1][X - d];
             } else {
-                if (bcmsid[X] <= p.bcms_max) {
+                if (bcmsid[X] < p.bcms_max) {
                     Sd[X]=p.alpha*S[1][X-d]+(1.0-p.alpha)*S[0][X-d];
                 } else {
                     Sd[X] = S[0][X - d];
@@ -442,7 +442,7 @@ double measure_ds_dalpha(const Field<T> (&S)[2], const Field<pT> &bcmsid, const 
     // Compute the change in the contributing nn terms. At lc they are in region A, at l they are in B
     // Values are stored in the Sd field
     onsites(ALL) {
-        if (bcmsid[X] > p.bcms_min && bcmsid[X] <= p.bcms_max) {
+        if (bcmsid[X] >= p.bcms_min && bcmsid[X] < p.bcms_max) {
             Sd[X] = S[1][X + d] - S[0][X + d];
         } else {
             Sd[X] = 0;
