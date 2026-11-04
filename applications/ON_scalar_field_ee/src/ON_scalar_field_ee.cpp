@@ -306,14 +306,17 @@ template <typename T, typename atype = hila::arithmetic_type<T>>
 void ON_heatbath(T &S, const T &nnsum, atype kappa, atype lambda, const T &source) {
     // Heatbath function for the N-component scalar field at a specific site.
     T Sn = 0;
-    atype vari = 1.0 / sqrt(2.0);
-    Sn.gaussian_random(vari);
-    Sn += 0.5 * (kappa * nnsum + source);
-    atype rSnsq = Sn.squarenorm() - 1.0;
-    atype rSsq = S.squarenorm() - 1.0;
-    atype texp = lambda * (rSnsq * rSnsq - rSsq * rSsq);
-    if (texp<=0 || hila::random() < exp(-texp)) {
-        S = Sn;
+    atype sigma = (atype)(1.0 / sqrt(2.0));
+    T tx0 = 0.5 * (kappa * nnsum + source);
+    while (true) {
+        Sn.gaussian_random(sigma);
+        Sn += tx0;
+        atype rSnsq = Sn.squarenorm() - (atype)1.0;
+        atype texp = -lambda * (rSnsq * rSnsq);
+        if (texp > fp<atype>::lmin && hila::random() < exp(texp)) {
+            S = Sn;
+            break;
+        }
     }
 }
 
