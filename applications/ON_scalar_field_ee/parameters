@@ -1,22 +1,23 @@
 # This is a parameter file for ON_scalar_field_ee
 
-lattice size           16,16,6
+lattice size           12,12,12
 kappa                  1.2
 lambda                 0.1
 source terms           0,0,0,0
-replica number         1
-boundary l             2.5
-boundary lc            2.75
+replica number         2
+boundary l             0.25
+boundary lc            0.5
 alpha                  0.5
 dalpha                 0.5
-update algorithm       1
+update algorithm       0
 number of trajectories 10000
-heatbath updates       600
-number of hb hits      1
-thermalization trajs   5000
+updates per traj       250
+number of hits         5
+thermalization trajs   1000
 interpolation steps    200
 trajs/corr dump        0
 trajs/config dump      0
 random seed            0
-trajs/saved            500
+trajs/saved            1000
 config name            config
+start config           1
