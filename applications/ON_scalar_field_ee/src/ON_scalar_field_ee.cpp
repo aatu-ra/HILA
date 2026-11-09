@@ -171,19 +171,15 @@ void sigma_to_file(std::string fname, parameters &p) {
         ofile.open(fname, std::ios::out | std::ios_base::trunc | std::ios::binary);
         ofile.write((char *)&(p.sigma), sizeof(ftype));
         ofile.close();
-
     }
 }
 
 void sigma_from_file(std::string fname, parameters &p) {
     //Loads the sigma parameter from a file
-    if (hila::myrank() == 0) {
-        std::ifstream ifile;
-        ifile.open(fname, std::ios::in  | std::ios::binary);
-        ifile.read((char *)&(p.sigma), sizeof(ftype));
-        ifile.close();
-
-    }
+    std::ifstream ifile;
+    ifile.open(fname, std::ios::in  | std::ios::binary);
+    ifile.read((char *)&(p.sigma), sizeof(ftype));
+    ifile.close();
 }
 
 
