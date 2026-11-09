@@ -164,6 +164,28 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
     }
 }
 
+void sigma_to_file(std::string fname, parameters &p) {
+    //Stores the sigma parameter to a file
+    if (hila::myrank() == 0) {
+        std::ofstream ofile;
+        ofile.open(fname, std::ios::out | std::ios_base::trunc | std::ios::binary);
+        ofile.write((char *)&(p.sigma), sizeof(ftype));
+        ofile.close();
+
+    }
+}
+
+void sigma_from_file(std::string fname, parameters &p) {
+    //Loads the sigma parameter from a file
+    if (hila::myrank() == 0) {
+        std::ifstream ifile;
+        ifile.open(fname, std::ios::in  | std::ios::binary);
+        ifile.read((char *)&(p.sigma), sizeof(ftype));
+        ifile.close();
+
+    }
+}
+
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direction &d, const Parity &par,
@@ -357,6 +379,9 @@ void ON_heatbath_const_r(T &S, const T &nnsum, atype kappa, atype lambda, const 
     atype r=S.norm();
     T kdir = (kappa * nnsum + source);
     atype knorm = kdir.norm();
+    if (r==0 || knorm==0) {
+        return;
+    }
     kdir /= knorm;
     atype ar0 = 0;
     atype al = knorm * r;
@@ -1543,8 +1568,10 @@ int main(int argc, char **argv) {
 
     // Alloc field (S) 
     Field<fT> S[2];
-
-    if (!restore_checkpoint(S[0], start_traj, p)) {
+    //Check if previous config exists
+    bool cont=restore_checkpoint(S[0], start_traj, p);
+    if (!cont) {
+        //If not a new simulation is started.
         hila::seed_random(seed);
         if (start==1) {
             onsites(ALL) {
@@ -1566,7 +1593,7 @@ int main(int argc, char **argv) {
     hila::timer measure_timer("Measurements");
 
     // Optimize the width of the gaussian distribution used by the Metropolis update so that the acceptance probability is 0.5
-    if (start_traj<0 && ualg!=0) {
+    if (!cont && ualg!=0) {
         p.sigma=0.01; // width of the distribution
         ftype dsigma=1; // How much the width is changed in each step
         ftype sigma_min,sigma_min_previous;
@@ -1623,7 +1650,15 @@ int main(int argc, char **argv) {
             diff_previous=diff;
             it++;
         }
-        
+        //Save the sigma value to a file
+        std::string sigmafname;
+        sigmafname=output_fname+"_sigma.bout";
+        sigma_to_file(sigmafname,p);
+    } else if (cont && ualg!=0) {
+        //Load the sigma value from a file
+        std::string sigmafname;
+        sigmafname=output_fname+"_sigma.bout";
+        sigma_from_file(sigmafname,p);
     }
     bool first = true;
     bool first_corr = true;
