@@ -24,7 +24,7 @@ struct parameters {
     ftype dalpha;
     int n_traj;         // number of trajectories to generate
     int n_therm;        // number of thermalization trajectories (counts only accepted traj.)
-    int n_heatbath;     // number of heat-bath sweeps per "trajectory"
+    int n_sweeps;       // number of sweeps per "trajectory"
     int n_multhits;     // number of corrected heat-bath hits per update
     int n_interp_steps; // number of interpolation steps to change alpha from 0 to 1
     int n_dump_corr;    // number of trajectories between correlator and condensate dumps
@@ -32,6 +32,7 @@ struct parameters {
     int n_save;         // number of trajectories between config. check point
     std::string config_file;
     ftype time_offset;
+    ftype sigma;        // Width of the probability distribution for Metropolis
 };
 
 
@@ -66,14 +67,15 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // p.source(0), ..., p.source(NCOLOR -1),
                 // p.alpha,
                 // p.dalpha
+                // p.sigma
                 //
                 int64_t *ibuff = (int64_t *)memalloc((NDIM + 9) * sizeof(int64_t));
                 ifile.read((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
                 ofile.write((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
 
-                double *fbuff = (double *)memalloc((NCOLOR + 4) * sizeof(double));
-                ifile.read((char *)fbuff, (NCOLOR + 4) * sizeof(double));
-                ofile.write((char *)fbuff, (NCOLOR + 4) * sizeof(double));
+                double *fbuff = (double *)memalloc((NCOLOR + 5) * sizeof(double));
+                ifile.read((char *)fbuff, (NCOLOR + 5) * sizeof(double));
+                ofile.write((char *)fbuff, (NCOLOR + 5) * sizeof(double));
 
                 int buffsize = dat.size() * sizeof(T);
                 atype *buffer = (atype *)memalloc(buffsize);
@@ -112,6 +114,7 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // p.source(0), ..., p.source(NCOLOR -1),
                 // p.alpha,
                 // p.dalpha
+                // p.sigma
                 //
                 ofile.open(fname, std::ios::out | std::ios::binary);
                 int64_t *ibuff = (int64_t *)memalloc((NDIM + 9) * sizeof(int64_t));
@@ -137,7 +140,8 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 }
                 fbuff[NCOLOR + 2] = p.alpha;
                 fbuff[NCOLOR + 3] = p.dalpha;
-                ofile.write((char *)fbuff, (NCOLOR + 4) * sizeof(double));
+                fbuff[NCOLOR+4]=p.sigma;
+                ofile.write((char *)fbuff, (NCOLOR + 5) * sizeof(double));
 
 
                 ofile.close();
@@ -160,6 +164,24 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
     }
 }
 
+void sigma_to_file(std::string fname, parameters &p) {
+    //Stores the sigma parameter to a file
+    if (hila::myrank() == 0) {
+        std::ofstream ofile;
+        ofile.open(fname, std::ios::out | std::ios_base::trunc | std::ios::binary);
+        ofile.write((char *)&(p.sigma), sizeof(ftype));
+        ofile.close();
+    }
+}
+
+void sigma_from_file(std::string fname, parameters &p) {
+    //Loads the sigma parameter from a file
+    std::ifstream ifile;
+    ifile.open(fname, std::ios::in  | std::ios::binary);
+    ifile.read((char *)&(p.sigma), sizeof(ftype));
+    ifile.close();
+}
+
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direction &d, const Parity &par,
@@ -179,7 +201,7 @@ void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
             Sd[X] = S[1][X + d];
         } else {
             if (bcmsid[X] < p.bcms_max) {
-                Sd[X]=p.alpha*S[1][X+d]+(1.0-p.alpha)*S[0][X+d];
+                Sd[X]=p.alpha*S[1][X+d]+((ftype)1.0-p.alpha)*S[0][X+d];
             } else {
                 Sd[X] = S[0][X + d];
             }
@@ -188,12 +210,12 @@ void move_filtered_p(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Dire
     if (both_dirs) {
         onsites(par) {
             if (bcmsid[X] < p.bcms_min) {
-                Sd[X] = S[1][X - d];
+                Sd[X]+=S[1][X - d];
             } else {
                 if (bcmsid[X] < p.bcms_max) {
-                    Sd[X]=p.alpha*S[1][X-d]+(1.0-p.alpha)*S[0][X-d];
+                    Sd[X]+=p.alpha*S[1][X-d]+((ftype)1.0-p.alpha)*S[0][X-d];
                 } else {
-                    Sd[X] = S[0][X - d];
+                    Sd[X]+=S[0][X - d];
                 }
             }
         }
@@ -300,22 +322,125 @@ void move_filtered(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direct
 
 template <typename T, typename atype = hila::arithmetic_type<T>>
 void ON_heatbath(T &S, const T &nnsum, atype kappa, atype lambda, const T &source) {
-    // Heatbath function for the N-component scalar field at a specific site.
     T Sn = 0;
-    atype vari = 1.0 / sqrt(2.0);
-    Sn.gaussian_random(vari);
-    Sn += 0.5 * (kappa * nnsum + source);
-    atype rSnsq = Sn.squarenorm() - 1.0;
-    atype rSsq = S.squarenorm() - 1.0;
-    atype texp = lambda * (rSnsq * rSnsq - rSsq * rSsq);
-    if (texp<=0 || hila::random() < exp(-texp)) {
-        S = Sn;
+    atype sigma = (atype)(1.0 / sqrt(2.0));
+    T tx0 = 0.5 * (kappa * nnsum + source);
+    while (true) {
+        Sn.gaussian_random(sigma);
+        Sn += tx0;
+        atype rSnsq = Sn.squarenorm() - (atype)1.0;
+        atype texp = -lambda * (rSnsq * rSnsq);
+        if (texp > fp<atype>::lmin && hila::random() < exp(texp)) {
+            S = Sn;
+            break;
+        }
+    }
+    return;
+}
+
+template <typename T, typename atype = hila::arithmetic_type<T>>
+void ON_metropolis_r(T &S, const T &nnsum, atype kappa, atype lambda, const T &source) {
+    double drsigma = 0.2;
+    double r = (double)S.norm();
+    double dr = hila::gaussrand() * drsigma;
+    double rn = r + dr;
+    if(rn <= 0) {
+        return;
+    }
+    if(r == 0) {
+        S.gaussian_random();
+        S /= S.norm();
+        S *= rn;
+        return;
+    }
+    T kdir = (kappa * nnsum + source);
+    double knorm = (double)kdir.norm();
+    kdir /= knorm;
+    double ar0 = (double)S.dot(kdir) / r;
+    double al = knorm * ar0;
+    double rsq = r * r - 1;
+    double rnsq = rn * rn - 1;
+    double texp = al * r - rsq - lambda * rsq * rsq;
+    double texpn = al * rn - rnsq - lambda * rnsq * rnsq;
+    double accp= pow(rn / r, T::size() - 1) * exp(texpn - texp);
+    if(hila::random() < accp) {
+        S *= rn / r;
     }
 }
 
+template <typename T, typename atype = hila::arithmetic_type<T>>
+void ON_heatbath_const_r(T &S, const T &nnsum, atype kappa, atype lambda, const T &source) {
+#if NCOLOR > 2
+    double pi2 = M_PI * 2.0;
+    atype r=S.norm();
+    T kdir = (kappa * nnsum + source);
+    atype knorm = kdir.norm();
+    if (r==0 || knorm==0) {
+        return;
+    }
+    kdir /= knorm;
+    atype ar0 = 0;
+    atype al = knorm * r;
+
+#if NCOLOR == 3
+    double xl = exp((double)(-2.0 * al));
+    double xd = 1.0 - xl;
+    double xr = xl + xd * hila::random();
+    ar0 = (atype)(1.0 + log((double)xr) / al);
+#else
+    int test = 0;
+    if (al > sqrt(T::size())) { /* k-p algorithm */
+        double xr3, xr4, delsq;
+        for (int k = 0; k < 40 && !test; ++k) {
+            /* draw delsq from distribution delsq^(NCOLOR-2)/2 * exp(-al * delsq) */
+            delsq = -log(1.0 - hila::random());
+            for (int i = 0; i < (T::size() - 3) / 2; ++i) {
+                delsq -= log(1.0 - hila::random());
+            }
+            if(T::size() % 2 == 0) {
+                xr3 = cos(pi2 * hila::random());
+                delsq -= xr3 * xr3 *log(1.0 - hila::random());
+            }
+            delsq /= al;
+            /* correct for factor sqrt(1 - delsq/2)^(NCOLOR-3) */
+            if (delsq < 2.0) {
+                xr4 = hila::random();
+                if (pow(1.0 - 0.5 * delsq, (T::size() - 3)) > xr4 * xr4) {
+                    test = 1;
+                    ar0 = (atype)(1.0 - delsq);
+                }
+            }
+        }
+    } else { /* now al <= sqrt(NCOLOR) with creutz algorithm */
+        double xr1, xr2, xr, a0;
+        double xl = exp((double)(-2.0 * al));
+        double xd = 1.0 - xl;
+        for (int k = 0; k < 40 && test == 0; ++k) {
+            /* get two random numbers */
+            xr1 = hila::random();
+            xr2 = hila::random();
+            xr = xl + xd * xr1;
+            a0 = 1.0 + log((double)xr) / al;
+            /* correct for factor sqrt(1 - a0^2)^(NCOLOR-3) */
+            if (pow(1.0 - a0 * a0, T::size() - 3) > xr2 * xr2) {
+                ar0 = (atype)a0;
+                test = 1;
+            }
+        }
+    }
+
+    S.gaussian_random();
+    S -= S.dot(kdir) * kdir;
+    S /= S.norm();
+    S *= r * sqrt(1.0 - ar0 * ar0);
+    S += ar0 * r * kdir;
+#endif
+
+#endif
+}
 
 /**
- * @brief Wrapper function to updated O(N) scalar field per parity
+ * @brief Wrapper function to updated O(N) scalar field per paraity
  * @details --
  *
  * @tparam T field type
@@ -327,11 +452,12 @@ void ON_heatbath(T &S, const T &nnsum, atype kappa, atype lambda, const T &sourc
  * @param tpar temporal parity
  */
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
-void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters &p, Parity par) {
+void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters &p, Parity par, int tpar) {
 
     static hila::timer hb_timer("Heatbath");
+
     Field<T> Sd, nnsum = 0;
-    //Compute the nnsum. For the time direction the non-standard nn topologies are taken into account
+
     foralldir(d) {
         if (d < NDIM - 1) {
             S[0].start_gather(-d);
@@ -343,17 +469,29 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
             onsites(par) nnsum[X] += Sd[X];
         }
     }
+
     hb_timer.start();
-    // With the obtained nnsum the update is performed
+    Direction td = Direction(NDIM - 1);
     onsites(par) {
-        for (int i = 0; i < p.n_multhits; ++i) {
-            ON_heatbath(S[0][X], nnsum[X], p.kappa, p.lambda, p.source);
+        if(X.coordinate(td) % 2 == tpar) {
+#if NCOLOR > 2
+            for (int i=0;i<p.n_multhits;i++) {
+                if(hila::random() < 0.5) {
+                    ON_heatbath_const_r(S[0][X], nnsum[X], p.kappa, p.lambda, p.source);
+                } else {
+                    ON_metropolis_r(S[0][X], nnsum[X], p.kappa, p.lambda, p.source);
+                }
+            }
+#else
+            for (int i=0;i<p.n_multhits;i++)  {
+                ON_heatbath(S[0][X], nnsum[X], p.kappa, p.lambda, p.source);
+            }
+#endif
         }
     }
 
     hb_timer.stop();
 }
-
 /**
  * @brief Wrapper update function
  * @details field update sweep with randomly chosen spatial and temporal parities 
@@ -366,17 +504,19 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
  */
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void hb_update(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
-    std::array<int, 2> rnarr;
-    for (int i = 0; i < 2; ++i) {
+    std::array<int, 4> rnarr;
+    for (int i = 0; i < 4; ++i) {
         // randomly choose a parity:
-        rnarr[i] = (int)(hila::random() * 2);
+        rnarr[i] = (int)(hila::random() * 4);
     }
     hila::broadcast(rnarr);
 
-    for (int i = 0; i < 2; ++i) {
-        int tpar = 1+rnarr[i];
+    for (int i = 0; i < 4; ++i) {
+        int tdp=rnarr[i];
+        int ttpar=tdp/2;
+        int tspar = 1+(tdp%2);
         // perform the selected updates:
-        hb_update_parity(S, bcmsid, p, Parity(tpar));
+        hb_update_parity(S, bcmsid, p, Parity(tspar), ttpar);
     }
 }
 
@@ -393,13 +533,213 @@ void hb_update(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
  */
 template <typename T, typename pT>
 void do_hb_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
-    for (int n = 0; n < p.n_heatbath; n++) {
+    for (int n = 0; n < p.n_sweeps; n++) {
         hb_update(S, bcmsid, p);
     }
 }
 
 
 // heat-bath functions
+///////////////////////////////////////////////////////////////////////////////////
+// Metropolis functions
+
+template <typename T, typename atype = hila::arithmetic_type<T>>
+int ON_metropolis_optimization(T &S, const T &nnsum, atype kappa, atype lambda, const T &source, atype sigma) {
+    // Heatbath function for the N-component scalar field at a specific site.
+    T R=0;
+    R.gaussian_random(sigma);
+    T Sn=S+R;
+    atype Snsq = Sn.squarenorm();
+    atype Ssq = S.squarenorm();
+    atype del_s = -R.dot(kappa*nnsum+source)+(1-2*lambda)*(Snsq-Ssq)+lambda*(Snsq * Snsq - Ssq * Ssq);
+    if (del_s<=0 || hila::random() < exp(-del_s)) {
+        S = Sn;
+        return 1;
+    }
+    return 0;
+}
+
+template <typename T, typename atype = hila::arithmetic_type<T>>
+void ON_metropolis(T &S, const T &nnsum, atype kappa, atype lambda, const T &source, atype sigma) {
+    // Heatbath function for the N-component scalar field at a specific site.
+    T R=0;
+    R.gaussian_random(sigma);
+    T Sn=S+R;
+    atype Snsq = Sn.squarenorm();
+    atype Ssq = S.squarenorm();
+    atype del_s = -R.dot(kappa*nnsum+source)+(1-2*lambda)*(Snsq-Ssq)+lambda*(Snsq * Snsq - Ssq * Ssq);
+    if (del_s<=0 || hila::random() < exp(-del_s)) {
+        S = Sn;
+    }
+}
+
+/**
+ * @brief Wrapper function to updated O(N) scalar field per parity
+ * @details --
+ *
+ * @tparam T field type
+ * @tparam pT type of bcmsid
+ * @param S[2] field for the two different nn-topologies
+ * @param bcmsid field specifying nn-topology to be used to compute nn terms
+ * @param p parameters
+ * @param par Parity specifies parity of links to be updated
+ * @param tpar temporal parity
+ */
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+void metro_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters &p, Parity par, int tpar) {
+
+    static hila::timer metro_timer("Metropolis");
+    Field<T> Sd, nnsum = 0;
+    //Compute the nnsum. For the time direction the non-standard nn topologies are taken into account
+    foralldir(d) {
+        if (d < NDIM - 1) {
+            S[0].start_gather(-d);
+            onsites(par) nnsum[X] += S[0][X + d];
+
+            onsites(par) nnsum[X] += S[0][X - d];
+        } else {
+            move_filtered(S, bcmsid, d, par, true, Sd, p);
+            onsites(par) nnsum[X] += Sd[X];
+        }
+    }
+    metro_timer.start();
+    Direction td = Direction(NDIM - 1);
+    // With the obtained nnsum the update is performed
+    onsites(par) {
+        if(X.coordinate(td)%2==tpar) {
+            for (int i = 0; i < p.n_multhits; ++i) {
+                ON_metropolis(S[0][X], nnsum[X], p.kappa, p.lambda, p.source, p.sigma);
+            }
+        }
+    }
+
+    metro_timer.stop();
+}
+
+/**
+ * @brief Wrapper update function
+ * @details field update sweep with randomly chosen spatial and temporal parities 
+ *
+ * @tparam T field type
+ * @tparam pT type of bcmsid
+ * @param S[2] field for the two different nn-topologies
+ * @param bcmsid field specifying nn-topology to be used to compute nn terms
+ * @param p parameters
+ */
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+void metro_update(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
+    std::array<int, 4> rnarr;
+    for (int i = 0; i < 4; ++i) {
+        // randomly choose a parity:
+        rnarr[i] = (int)(hila::random() * 4);
+    }
+    hila::broadcast(rnarr);
+
+    for (int i = 0; i < 4; ++i) {
+        int tdp=rnarr[i];
+        int ttpar=tdp/2;
+        int tspar = 1+(tdp%2);
+        // perform the selected updates:
+        metro_update_parity(S, bcmsid, p, Parity(tspar),ttpar);
+    }
+}
+
+/**
+ * @brief Evolve field
+ * @details Evolution happens by means of a metropolis corrected heatbath algorithm. We do on average
+ * p.n_heatbath heatbath updates on each site per sweep.
+ *
+ * @tparam T field type
+ * @tparam pT type of plaq_tbc_mode
+ * @param S[2] Field for the two different nn-topologies
+ * @param bcmsid Field specifying nn-topology to be used to compute nn terms
+ * @param p parameters
+ */
+template <typename T, typename pT>
+void do_metro_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
+    for (int n = 0; n < p.n_sweeps; n++) {
+        metro_update(S, bcmsid, p);
+    }
+}
+
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+void metro_update_parity_opt(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters &p, Parity par, int tpar ,atype &acc_moves) {
+
+    static hila::timer metro_timer("Metropolis");
+    Field<T> Sd, nnsum = 0;
+    Reduction<double> ia_moves=0;
+    ia_moves.allreduce(true).delayed(true);
+    //Compute the nnsum. For the time direction the non-standard nn topologies are taken into account
+    foralldir(d) {
+        if (d < NDIM - 1) {
+            S[0].start_gather(-d);
+            onsites(par) nnsum[X] += S[0][X + d];
+
+            onsites(par) nnsum[X] += S[0][X - d];
+        } else {
+            move_filtered(S, bcmsid, d, par, true, Sd, p);
+            onsites(par) nnsum[X] += Sd[X];
+        }
+    }
+    metro_timer.start();
+    Direction td = Direction(NDIM - 1);
+    // With the obtained nnsum the update is performed
+    onsites(par) {
+        if(X.coordinate(td)%2==tpar) {
+            for (int i = 0; i < p.n_multhits; ++i) {
+                ia_moves+=ON_metropolis_optimization(S[0][X], nnsum[X], p.kappa, p.lambda, p.source, p.sigma);
+            }
+        }
+    }
+    acc_moves+=ia_moves.value();
+    metro_timer.stop();
+}
+
+/**
+ * @brief Wrapper update function
+ * @details field update sweep with randomly chosen spatial and temporal parities 
+ *
+ * @tparam T field type
+ * @tparam pT type of bcmsid
+ * @param S[2] field for the two different nn-topologies
+ * @param bcmsid field specifying nn-topology to be used to compute nn terms
+ * @param p parameters
+ */
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+void metro_update_opt(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, atype &acc_moves) {
+    std::array<int, 4> rnarr;
+    for (int i = 0; i < 4; ++i) {
+        // randomly choose a parity:
+        rnarr[i] = (int)(hila::random() * 4);
+    }
+    hila::broadcast(rnarr);
+    for (int i = 0; i < 4; ++i) {
+        int tdp=rnarr[i];
+        int ttpar=tdp/2;
+        int tspar = 1+(tdp%2);
+        // perform the selected updates:
+        metro_update_parity_opt(S, bcmsid, p, Parity(tspar),ttpar,acc_moves);
+    }
+}
+
+/**
+ * @brief Evolve field
+ * @details Evolution happens by means of a metropolis corrected heatbath algorithm. We do on average
+ * p.n_heatbath heatbath updates on each site per sweep.
+ *
+ * @tparam T field type
+ * @tparam pT type of plaq_tbc_mode
+ * @param S[2] Field for the two different nn-topologies
+ * @param bcmsid Field specifying nn-topology to be used to compute nn terms
+ * @param p parameters
+ */
+template <typename T, typename pT,typename atype = hila::arithmetic_type<T>>
+void do_metro_optimization_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, atype &acc_moves) {
+    for (int n = 0; n < p.n_sweeps; n++) {
+        metro_update_opt(S, bcmsid, p, acc_moves);
+    }
+}
+// Metropolis functions
 ///////////////////////////////////////////////////////////////////////////////////
 // measurement functions
 
@@ -765,6 +1105,107 @@ void do_hbbc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p, s
     p.alpha = alpha;
 }
 
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+void do_interp_metro_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p,
+                             int interp_dir, out_only atype &ds) {
+
+    // Function for the non-equilibrium interpolation
+    static hila::timer metrobc_timer("MetroBC (update)");
+    metrobc_timer.start();
+
+    atype dalpha = p.dalpha / p.n_interp_steps; // step size of interpolating parameter
+    atype alpha0 = p.alpha;
+    // Figure out in which direction alpha is changed
+    if (interp_dir == 0) {
+        dalpha = 0;
+    } else if (interp_dir < 0) {
+        dalpha = -dalpha;
+    }
+    // Perform evolution
+    ds = 0;
+    for (int n = 1; n < p.n_interp_steps; ++n) {
+        ds += measure_ds_dalpha(S, bcmsid, p); // work done during n-th interpolation step
+        p.alpha = alpha0 + n * dalpha; // Update alpha
+
+        metro_update(S, bcmsid, p); // Perform heatbath update
+
+    }
+    ds += measure_ds_dalpha(S, bcmsid, p); // work done during last interpolation step
+
+
+    ds *= dalpha;
+
+    metrobc_timer.stop();
+}
+
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+void do_metrobc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p, std::vector<atype> &ds, bool output = false) {
+    // Performs the non-equilibrium updates used to measure the ratio of partition functions used to evaluate the ratio of partition functions
+    // Z(lc)/Z(l)
+
+    //Store the original value of alpha. alpha is updated during the evolution and restored to its original value after the evolution.
+    auto alpha = p.alpha;
+
+
+    ds.resize(2);
+    ds[0] = 0;
+    ds[1] = 0;
+    // original value of the field is also stored.
+    Field<T> S_old = S[0];
+
+    static bool first = true;
+    if (first) {
+        if(output) {
+            // print legend for measurement output
+            hila::out0 << "LMBC:         DIR              dS_EXT          TIME\n";
+        }
+        first = false;
+    }
+
+    ftype ttime = hila::gettime();
+    int ipdir;
+    if (p.alpha == 0) {
+        // do evolution from alpha=0 to alpha=1 ie. l to lc
+        ipdir = 1;
+        do_interp_metro_trajectory(S, bcmsid, p, ipdir, ds[0]);
+        if (output) {
+            hila::out0 << string_format("MBC            % 1d % 0.12e    % 10.5f\n", ipdir, ds[0],
+                                        hila::gettime() - ttime);
+        }
+    } else if (p.alpha == 1) {
+        // do evolution from alpha=1 to alpha=0 ie. lc to l
+        ipdir = -1;
+        do_interp_metro_trajectory(S, bcmsid, p, ipdir, ds[1]);
+        if (output) {
+            hila::out0 << string_format("MBC            % 1d % 0.12e    % 10.5f\n", ipdir, ds[1],
+                                        hila::gettime() - ttime);
+        }
+    } else {
+        // do two evolutions. one from alpha=0.5 to alpha=1 ie. towards lc and another from alpha=0.5 to alpha=0 ie. towards l
+        // The field is restored to its original value in between.
+        p.alpha = 0.5;
+        ipdir = 1;
+        do_interp_metro_trajectory(S, bcmsid, p, ipdir, ds[0]);
+        ftype tttime = hila::gettime();
+        if (output) {
+            hila::out0 << string_format("MBC            % 1d % 0.12e    % 10.5f\n", ipdir, ds[0],
+                                        tttime - ttime);
+        }
+        ttime = tttime;
+        S[0] = S_old;
+        p.alpha = 0.5;
+        ipdir = -1;
+        do_interp_metro_trajectory(S, bcmsid, p, ipdir, ds[1]);
+        if (output) {
+            hila::out0 << string_format("MBC            % 1d % 0.12e    % 10.5f\n", ipdir, ds[1],
+                                        hila::gettime() - ttime);
+        }
+    }
+    // Restore the field and alpha to their original values
+    S[0] = S_old;
+    p.alpha = alpha;
+}
+
 template <typename T, typename pT>
 void measure_stuff(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
 
@@ -885,7 +1326,7 @@ public:
                 }
             }
         }
-
+#if NDIM>2
         if (cn[e_y] >= lsize[e_y]) {
             //cn[e_z] += 1;
             cn[e_y] = 0;
@@ -894,7 +1335,8 @@ public:
             //cn[e_z] -= 1;
             cn[e_y] = lsize[e_y] - 1;
         }
-#if NDIM > 2 
+#endif
+#if NDIM > 3 
             if (cn[e_z] >= lsize[e_z]) {
                 //cn[e_x] += 1;
                 cn[e_z] = 0;
@@ -937,7 +1379,7 @@ int bcms_from_l(ftype tl) {
     // Convert a slab width l to the corresponding number of spatial sites in
     // the entangling region.  The slab grows first in x and then through the
     // remaining spatial coordinates within the partially filled x-slice.
-    return (int)((tl*(1.0+std::numeric_limits<ftype>::epsilon()))*(lattice.volume()/(lattice.size(0)*lattice.size(NDIM-1))));
+    return (int)((tl*((ftype)1.0+std::numeric_limits<ftype>::epsilon()))*(lattice.volume()/(lattice.size(0)*lattice.size(NDIM-1))));
 }
 
 
@@ -964,6 +1406,7 @@ int main(int argc, char **argv) {
 
     parameters p;
     ftype tl,tlc;
+    int ualg;
 
     hila::input par("parameters");
 
@@ -986,12 +1429,14 @@ int main(int argc, char **argv) {
     p.alpha = par.get("alpha");
     // interpolation parameter
     p.dalpha = par.get("dalpha");
+    // what update alg. is used, 0 for modified heatbath, 1 for metropolis
+    ualg=par.get("update algorithm");
     // number of trajectories
     p.n_traj = par.get("number of trajectories");
     // number of heat-bath (HB) sweeps per trajectory
-    p.n_heatbath = par.get("heatbath updates");
-    // number of multi-hits per HB update
-    p.n_multhits = par.get("number of hb hits");
+    p.n_sweeps = par.get("updates per traj");
+    // number of multi-hits per update
+    p.n_multhits = par.get("number of hits");
     // number of thermalization trajectories
     p.n_therm = par.get("thermalization trajs");
     // number of alpha-interpolation steps
@@ -1006,6 +1451,7 @@ int main(int argc, char **argv) {
     p.n_save = par.get("trajs/saved");
     // measure surface properties and print "profile"
     p.config_file = par.get("config name");
+    int start=par.get("start config");
 
     par.close(); // file is closed also when par goes out of scope
 
@@ -1028,7 +1474,6 @@ int main(int argc, char **argv) {
     p.bcms_min = bcms_from_l(tl);
     p.bcms_max = bcms_from_l(tlc);
     // We need random number here
-    hila::seed_random(seed);
 
     // use a field bcmsid as look-up table for the magnitude of the spatial momentum vector in
     // Fourier space:
@@ -1050,6 +1495,23 @@ int main(int argc, char **argv) {
         bcmsid[X] = tempbcmsid;
     }
 
+    //A pointer to the update trajectory function is created and it is made to refer to the chosen update.
+    void (*do_eq_trajectory)(Field<fT> (&S)[2], const Field<ftype> &bcmsid, const parameters &p);
+    if (ualg==0) {
+        do_eq_trajectory=do_hb_trajectory;
+        hila::out0<<"Modified heatbath update \n";
+        p.sigma=0;
+    } else {
+        do_eq_trajectory=do_metro_trajectory;
+        hila::out0<<"Metropolis update \n";
+    }
+
+    void (*do_bc_measure)(Field<fT> (&S)[2], const Field<ftype> &bcmsid, parameters &p, std::vector<ftype> &ds, bool output);
+    if (ualg==0) {
+        do_bc_measure=do_hbbc_measure;
+    } else {
+        do_bc_measure=do_metrobc_measure;
+    }
     std::string output_fname = string_format("O%d", NCOLOR);
     output_fname += string_format("_d%d", NDIM);
     foralldir(d) {
@@ -1102,17 +1564,98 @@ int main(int argc, char **argv) {
 
     // Alloc field (S) 
     Field<fT> S[2];
-    Field<fT> S_back = 0;
-
-    if (!restore_checkpoint(S[0], start_traj, p)) {
-        S[0] = 0;
+    //Check if previous config exists
+    bool cont=restore_checkpoint(S[0], start_traj, p);
+    if (!cont) {
+        //If not a new simulation is started.
+        hila::seed_random(seed);
+        if (start==1) {
+            onsites(ALL) {
+                // Hot start. The N-vectors are drawn from a gaussian random distribution
+                fT Sn;
+                Sn.gaussian_random(2.5);
+                S[0][X]=Sn;
+            }
+            hila::out0<<"Hot start \n";
+        } else {
+            //Cold start. Everything is set to zero
+            S[0] = 0;
+            hila::out0<<"Cold start \n";
+        }
     }
     S[1].make_ref_to(S[0], 1);
 
     hila::timer update_timer("Updates");
     hila::timer measure_timer("Measurements");
 
-    double act_old, act_new, s_old, s_new;
+    // Optimize the width of the gaussian distribution used by the Metropolis update so that the acceptance probability is 0.5
+    if (!cont && ualg!=0) {
+        p.sigma=0.01; // width of the distribution
+        ftype dsigma=1; // How much the width is changed in each step
+        ftype sigma_min,sigma_min_previous;
+        int it=0, max_it=50; //How many iterations have been done and the max number of iterations after which the program stops the optimization
+        int n_updates=p.n_sweeps*lattice.volume()*p.n_multhits; //Total number of metropolis updates in one trajectory
+        ftype acc_updates;
+        ftype acc_rates,diff,diff_previous=1.0,diff_min=1.0,diff_min_previous=1.0;
+        hila::out0<<"Optimizing metropolis acceptance rate: \n";
+        //Do a loop in which sigma is changed untill one is found that produces the 0.5 acceptance rate
+        while (true) {
+            acc_updates=0;
+            //Perform a metropolis trajectory with the current sigma and count how many updates are computed.
+            //From this one computes the acceptance rate and its difference from 0.5
+            do_metro_optimization_trajectory(S, bcmsid, p,acc_updates);
+            acc_rates=acc_updates/n_updates;
+            hila::out0<<"Metropolis sigma: "<<p.sigma<<"\n";
+            hila::out0<<"Metropolis acceptance rate: "<<acc_rates<<"\n";
+            diff=abs(acc_rates-0.5);
+            if (diff<0.01) {
+                //If the acceptance rate is withing 0.01 of 0.5, exit the loop with the current sigma value
+                hila::out0<<"Wanted sigma found  in "<<it<<" iterations\n";
+                break;
+            } else if (it>=max_it) {
+                //If the max_it iterations are reached, the program exits the loop with the sigma that procuded the acceptance rate closest to 0.5,
+                //Done to prevent the program from getting stuck in the loop indefinitely.
+                p.sigma=sigma_min;
+                hila::out0<<"Max iterations reach. Sigma producing acceptance rates closest to 0.5 picked \n";
+                hila::out0<<"Metropolis sigma: "<<p.sigma<<"\n";
+                break;
+            }
+            if (diff>diff_previous){
+                //If the optimization is moving away from 0.5, return to the sigma value just before the one that produced the closest acceptance rate 
+                //and continue the iteration with a fined dsigma value
+                p.sigma=sigma_min_previous;
+                diff_previous=diff_min_previous;
+                dsigma=0.1*dsigma;
+                p.sigma+=dsigma;
+                it++;
+                continue;
+            }
+            if (diff<diff_min) {
+                //If the sigma value produces the rate closest to 0.5 store it and the sigma value preceeding it
+                sigma_min=p.sigma;
+                if (p.sigma<dsigma) {
+                    sigma_min_previous=p.sigma;
+                } else {
+                    sigma_min_previous=p.sigma-dsigma;
+                }
+                diff_min=diff;
+                diff_min_previous=diff_previous;
+            }
+            //Increase sigma by dsigma, store the difference of the acc_rate to 0.5 and update the iteration counter.
+            p.sigma+=dsigma;
+            diff_previous=diff;
+            it++;
+        }
+        //Save the sigma value to a file
+        std::string sigmafname;
+        sigmafname=output_fname+"_sigma.bout";
+        sigma_to_file(sigmafname,p);
+    } else if (cont && ualg!=0) {
+        //Load the sigma value from a file
+        std::string sigmafname;
+        sigmafname=output_fname+"_sigma.bout";
+        sigma_from_file(sigmafname,p);
+    }
     bool first = true;
     bool first_corr = true;
     for (int trajectory = start_traj; trajectory <= p.n_traj; ++trajectory) {
@@ -1120,9 +1663,7 @@ int main(int argc, char **argv) {
         ftype ttime = hila::gettime();
 
         update_timer.start();
-
-        do_hb_trajectory(S, bcmsid, p);
-
+        do_eq_trajectory(S, bcmsid, p);
         // put sync here in order to get approx gpu timing
         hila::synchronize_threads();
         update_timer.stop();
@@ -1136,7 +1677,7 @@ int main(int argc, char **argv) {
         if (p.s > 1 && trajectory >= 0) {
             if (p.n_interp_steps > 0) {
                 std::vector<double> ds(2, 0);
-                do_hbbc_measure(S, bcmsid, p, ds);
+                do_bc_measure(S, bcmsid, p, ds,false);
                 bwrite_to_file(ds_output_fname, ds, p, trajectory, first);
                 first = false;
             }
