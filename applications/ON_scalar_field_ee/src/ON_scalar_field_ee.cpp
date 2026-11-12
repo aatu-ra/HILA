@@ -314,9 +314,6 @@ void move_filtered(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direct
             onsites(par) Sd[X] += S[0][X - d];
         }
     }
-    //Multiply by the mu matrix
-    onsites(par) Sd[X]=p.re_muM*Sd[X];
-
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -474,7 +471,7 @@ void hb_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const parameters
             onsites(par) nnsum[X] += S[0][X - d];
         } else {
             move_filtered(S, bcmsid, d, par, true, Sd, p);
-            onsites(par) nnsum[X] += Sd[X];
+            onsites(par) nnsum[X] += p.re_muM*Sd[X];
         }
     }
 
@@ -607,7 +604,7 @@ void metro_update_parity(Field<T>(&S)[2], const Field<pT> &bcmsid, const paramet
             onsites(par) nnsum[X] += S[0][X - d];
         } else {
             move_filtered(S, bcmsid, d, par, true, Sd, p);
-            onsites(par) nnsum[X] += Sd[X];
+            onsites(par) nnsum[X] += p.re_muM*Sd[X];
         }
     }
     metro_timer.start();
@@ -686,7 +683,7 @@ void metro_update_parity_opt(Field<T>(&S)[2], const Field<pT> &bcmsid, const par
             onsites(par) nnsum[X] += S[0][X - d];
         } else {
             move_filtered(S, bcmsid, d, par, true, Sd, p);
-            onsites(par) nnsum[X] += Sd[X];
+            onsites(par) nnsum[X] += p.re_muM*Sd[X];
         }
     }
     metro_timer.start();
@@ -751,8 +748,38 @@ void do_metro_optimization_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid,
 ///////////////////////////////////////////////////////////////////////////////////
 // measurement functions
 
-template <typename T, typename pT, typename atype = hila::arithmetic_type<T>,typename ctype>
-double measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, double &s_kin) {
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+void measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, atype &s_kin, atype &s_re, atype &s_im) {
+    Reduction<double> s = 0, s_pot = 0,si=0;
+    s.allreduce(false).delayed(true);
+    si.allreduce(false).delayed(true);
+    Field<T> Sd;
+    // hopping terms in all directions:
+    foralldir(d) {
+        if (d < NDIM - 1) {
+            onsites(ALL) {
+                s += -p.kappa * S[0][X].dot(S[0][X + d]);
+            }
+        } else {
+            move_filtered(S, bcmsid, d, ALL, false, Sd, p);
+            onsites(ALL) {
+                s += -p.kappa * S[0][X].dot(p.re_muM*Sd[X]);
+                si += -p.kappa * S[0][X].dot(p.im_muM*Sd[X]);
+            }
+        }
+    }
+    // potential term:
+    onsites(ALL) {
+        atype S2 = S[0][X].squarenorm();
+        s_pot += S2 + p.lambda * (S2 - 1.0) * (S2 - 1.0) - S[0][X].dot(p.source);
+    }
+    s_kin = s.value();
+    s_re=s_kin + s_pot.value();
+    s_im=si.value();
+}
+
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+double measure_s_re(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, double &s_kin) {
     Reduction<double> s = 0, s_pot = 0;
     s.allreduce(false).delayed(true);
     Field<T> Sd;
@@ -765,7 +792,7 @@ double measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const paramete
         } else {
             move_filtered(S, bcmsid, d, ALL, false, Sd, p);
             onsites(ALL) {
-                s += -p.kappa * S[0][X].dot(Sd[X]);
+                s += -p.kappa * S[0][X].dot(p.re_muM*Sd[X]);
             }
         }
     }
@@ -777,6 +804,25 @@ double measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const paramete
     s_kin = s.value();
     return s_kin + s_pot.value();
 }
+
+
+
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+double measure_s_im(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
+    //Computes the imaginary part of the action
+    Reduction<double> s_im=0;
+    s_im.allreduce(false).delayed(true);
+    Field<T> Sd;
+    // hopping terms in all directions:
+    Direction d = Direction(NDIM - 1);
+    move_filtered(S, bcmsid, d, ALL, false, Sd, p);
+    onsites(ALL) {
+        s_im += -p.kappa * S[0][X].dot(p.im_muM*Sd[X]);
+    }
+    return s_im.value();
+}
+
+
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 double measure_ds_dalpha(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
@@ -1214,21 +1260,24 @@ void do_metrobc_measure(Field<T> (&S)[2], const Field<pT> &bcmsid, parameters &p
     p.alpha = alpha;
 }
 
-template <typename T, typename pT>
+template <typename T, typename pT,typename atype = hila::arithmetic_type<T>>
 void measure_stuff(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
 
     static bool first = true;
     if (first) {
         // print legend for measurement output
-        hila::out0 << "LMEAS:         s_kin               s                  dS\n";
+        hila::out0 << "LMEAS:         s_re_kin               s_re               s_im                  dS\n";
         first = false;
     }
-    double s_kin = 0;
-    auto s = measure_s(S, bcmsid, p, s_kin) / lattice.volume();
+    atype s_kin = 0,s_re=0,s_im=0;
+
+    measure_s(S, bcmsid, p, s_kin,s_re,s_im);
     s_kin /= lattice.volume();
+    s_re /= lattice.volume();
+    s_im /= lattice.volume();
     auto ds = measure_ds_dalpha(S, bcmsid, p);
 
-    hila::out0 << string_format("MEAS % 0.8e % 0.8e % 0.12e\n", s_kin, s, ds);
+    hila::out0 << string_format("MEAS % 0.8e % 0.8e % 0.8e % 0.12e\n", s_kin, s_re,s_im, ds);
 }
 
 // end measurement functions
