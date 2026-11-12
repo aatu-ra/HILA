@@ -4,6 +4,7 @@ lattice size           12,12,12
 kappa                  1.2
 lambda                 0.5
 source terms           0,0,0,0
+mu                     0
 replica number         2
 boundary l             2.5
 boundary lc            2.75

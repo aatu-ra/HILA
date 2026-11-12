@@ -10,6 +10,8 @@
 using ftype = double;
 using fT = Vector<NCOLOR, ftype>;
 using fTf = Vector<NCOLOR, float>;
+using fM=Matrix<NCOLOR,NCOLOR,ftype>;
+using cf=Complex<ftype>;
 
 // define a struct to hold the input parameters: this
 // makes it simpler to pass the values around
@@ -33,6 +35,9 @@ struct parameters {
     std::string config_file;
     ftype time_offset;
     ftype sigma;        // Width of the probability distribution for Metropolis
+    ftype mu;           // Chemical potential
+    fM re_muM;
+    fM im_muM;
 };
 
 
@@ -67,7 +72,7 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // p.source(0), ..., p.source(NCOLOR -1),
                 // p.alpha,
                 // p.dalpha
-                // p.sigma
+                // p.mu
                 //
                 int64_t *ibuff = (int64_t *)memalloc((NDIM + 9) * sizeof(int64_t));
                 ifile.read((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
@@ -114,7 +119,7 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 // p.source(0), ..., p.source(NCOLOR -1),
                 // p.alpha,
                 // p.dalpha
-                // p.sigma
+                // p.mu
                 //
                 ofile.open(fname, std::ios::out | std::ios::binary);
                 int64_t *ibuff = (int64_t *)memalloc((NDIM + 9) * sizeof(int64_t));
@@ -132,7 +137,7 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 ibuff[NDIM+8]=p.bcms_max;
                 ofile.write((char *)ibuff, (NDIM + 9) * sizeof(int64_t));
 
-                double *fbuff = (double *)memalloc((NCOLOR + 4) * sizeof(double));
+                double *fbuff = (double *)memalloc((NCOLOR + 5) * sizeof(double));
                 fbuff[0] = p.kappa;
                 fbuff[1] = p.lambda;
                 for (int ic = 0; ic < NCOLOR; ++ic) {
@@ -140,7 +145,7 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
                 }
                 fbuff[NCOLOR + 2] = p.alpha;
                 fbuff[NCOLOR + 3] = p.dalpha;
-                fbuff[NCOLOR+4]=p.sigma;
+                fbuff[NCOLOR+4]=p.mu;
                 ofile.write((char *)fbuff, (NCOLOR + 5) * sizeof(double));
 
 
@@ -309,6 +314,9 @@ void move_filtered(const Field<T> (&S)[2], const Field<pT> &bcmsid, const Direct
             onsites(par) Sd[X] += S[0][X - d];
         }
     }
+    //Multiply by the mu matrix
+    onsites(par) Sd[X]=p.re_muM*Sd[X];
+
 }
 
 ///////////////////////////////////////////////////////////////////////////////////
@@ -743,7 +751,7 @@ void do_metro_optimization_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid,
 ///////////////////////////////////////////////////////////////////////////////////
 // measurement functions
 
-template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>,typename ctype>
 double measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, double &s_kin) {
     Reduction<double> s = 0, s_pot = 0;
     s.allreduce(false).delayed(true);
@@ -1419,6 +1427,8 @@ int main(int argc, char **argv) {
     p.lambda = par.get("lambda");
     // source terms
     p.source = par.get("source terms");
+    // Chemical potential
+    p.mu=par.get("mu");
     // number of replicas
     p.s = par.get("replica number");
     // entangling region width for alpha=0
@@ -1505,13 +1515,26 @@ int main(int argc, char **argv) {
         do_eq_trajectory=do_metro_trajectory;
         hila::out0<<"Metropolis update \n";
     }
-
+    //Pointer to the NEMC method using the wanted update is constructed.
     void (*do_bc_measure)(Field<fT> (&S)[2], const Field<ftype> &bcmsid, parameters &p, std::vector<ftype> &ds, bool output);
     if (ualg==0) {
         do_bc_measure=do_hbbc_measure;
     } else {
         do_bc_measure=do_metrobc_measure;
     }
+
+    //Matrices containing the mu terms are constructed
+    p.re_muM=fM();p.im_muM=fM();
+    p.re_muM.e(0,0)=cosh(p.mu);
+    p.re_muM.e(1,1)=cosh(p.mu);
+    for (int i=2;i<NCOLOR;i++) {
+        p.re_muM.e(i,i)=1;
+    }
+    p.im_muM.e(0,1)=sinh(p.mu);
+    p.im_muM.e(1,0)=-sinh(p.mu);
+
+
+
     std::string output_fname = string_format("O%d", NCOLOR);
     output_fname += string_format("_d%d", NDIM);
     foralldir(d) {
