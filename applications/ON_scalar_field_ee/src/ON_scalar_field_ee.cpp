@@ -1266,7 +1266,7 @@ void measure_stuff(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parame
     static bool first = true;
     if (first) {
         // print legend for measurement output
-        hila::out0 << "LMEAS:         s_re_kin               s_re               s_im                  dS\n";
+        hila::out0 << "LMEAS:      s_re_kin          s_re          s_im           dS\n";
         first = false;
     }
     atype s_kin = 0,s_re=0,s_im=0;

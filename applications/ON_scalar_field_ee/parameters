@@ -4,7 +4,7 @@ lattice size           16,16,16
 kappa                  1.2
 lambda                 0.5
 source terms           0,0,0,0
-mu                     0.1
+mu                     0.75
 replica number         2
 boundary l             2.5
 boundary lc            2.75
@@ -14,7 +14,7 @@ update algorithm       0
 number of trajectories 10000
 updates per traj       150
 number of hits         1
-thermalization trajs   100
+thermalization trajs   500
 interpolation steps    200
 trajs/corr dump        0
 trajs/config dump      0
