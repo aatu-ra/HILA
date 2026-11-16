@@ -31,6 +31,7 @@ struct parameters {
     int n_interp_steps; // number of interpolation steps to change alpha from 0 to 1
     int n_dump_corr;    // number of trajectories between correlator and condensate dumps
     int n_dump_config;  // number of trajectories between config. dumps
+    int n_dump_mes;   // number of trajectrories between phase dumps
     int n_save;         // number of trajectories between config. check point
     std::string config_file;
     ftype time_offset;
@@ -43,11 +44,12 @@ struct parameters {
 
 template <typename T, typename iT, typename atype = hila::arithmetic_type<T>>
 void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p, iT idump, bool first) {
-
+    //Function for writing a vector dat into a file
     if (hila::myrank() == 0) {
         std::ofstream ofile;
 
         if (first) {
+            //Write the header of the file containing simulation information.
             if (filesys_ns::exists(fname)) {
                 // if file exists: make sure 
                 std::string fname_temp = fname + "_temp";
@@ -155,7 +157,7 @@ void bwrite_to_file(std::string fname, const std::vector<T> &dat, parameters &p,
             }
         }
 
-
+        //Write dat to file
         ofile.open(fname, std::ios::out | std::ios_base::app | std::ios::binary);
         int64_t tidump = (int64_t)idump;
         ofile.write((char *)&(tidump), sizeof(int64_t));
@@ -750,6 +752,7 @@ void do_metro_optimization_trajectory(Field<T> (&S)[2], const Field<pT> &bcmsid,
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 void measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, atype &s_kin, atype &s_re, atype &s_im) {
+    // Measure the action (real and imaginary parts)
     Reduction<double> s = 0, s_pot = 0,si=0;
     s.allreduce(false).delayed(true);
     si.allreduce(false).delayed(true);
@@ -761,10 +764,11 @@ void measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters
                 s += -p.kappa * S[0][X].dot(S[0][X + d]);
             }
         } else {
+            // For the time direction the replica boundary conditions and the chemical potential are taken into account.
             move_filtered(S, bcmsid, d, ALL, false, Sd, p);
             onsites(ALL) {
-                s += -p.kappa * S[0][X].dot(p.re_muM*Sd[X]);
-                si += -p.kappa * S[0][X].dot(p.im_muM*Sd[X]);
+                s += -p.kappa * S[0][X].dot(p.re_muM*Sd[X]); //Real part
+                si += -p.kappa * S[0][X].dot(p.im_muM*Sd[X]); //Imaginary part
             }
         }
     }
@@ -773,13 +777,14 @@ void measure_s(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters
         atype S2 = S[0][X].squarenorm();
         s_pot += S2 + p.lambda * (S2 - 1.0) * (S2 - 1.0) - S[0][X].dot(p.source);
     }
-    s_kin = s.value();
-    s_re=s_kin + s_pot.value();
-    s_im=si.value();
+    s_kin = s.value(); //Real kinetic term
+    s_re=s_kin + s_pot.value(); //Real part
+    s_im=si.value(); //Imaginary part
 }
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 double measure_s_re(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p, double &s_kin) {
+    // Measure the real part of the action
     Reduction<double> s = 0, s_pot = 0;
     s.allreduce(false).delayed(true);
     Field<T> Sd;
@@ -790,6 +795,7 @@ double measure_s_re(const Field<T> (&S)[2], const Field<pT> &bcmsid, const param
                 s += -p.kappa * S[0][X].dot(S[0][X + d]);
             }
         } else {
+            // For the time direction the replica boundary conditions and the chemical potential are taken into account.
             move_filtered(S, bcmsid, d, ALL, false, Sd, p);
             onsites(ALL) {
                 s += -p.kappa * S[0][X].dot(p.re_muM*Sd[X]);
@@ -813,7 +819,7 @@ double measure_s_im(const Field<T> (&S)[2], const Field<pT> &bcmsid, const param
     Reduction<double> s_im=0;
     s_im.allreduce(false).delayed(true);
     Field<T> Sd;
-    // hopping terms in all directions:
+    // hopping terms only in the time direction:
     Direction d = Direction(NDIM - 1);
     move_filtered(S, bcmsid, d, ALL, false, Sd, p);
     onsites(ALL) {
@@ -822,7 +828,37 @@ double measure_s_im(const Field<T> (&S)[2], const Field<pT> &bcmsid, const param
     return s_im.value();
 }
 
+template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
+cf measure_ni(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
+    // Measure the derivative of the action wrt to mu (real and imaginary parts)
 
+    //Derivatives of the mu matrices are constructed
+    fM re_muMdmu=fM(),im_muMdmu=fM();
+    re_muMdmu.e(0,0)=sinh(p.mu);
+    re_muMdmu.e(1,1)=sinh(p.mu);
+    for (int i=2;i<NCOLOR;i++) {
+        re_muMdmu.e(i,i)=1;
+    }
+    im_muMdmu.e(0,1)=cosh(p.mu);
+    im_muMdmu.e(1,0)=-cosh(p.mu);
+
+
+    Reduction<double> re = 0,im=0,phase_i=0;
+    re.allreduce(false).delayed(true);
+    im.allreduce(false).delayed(true);
+    phase_i.allreduce(false).delayed(true);
+    Field<T> Sd;
+    // hopping terms only in the time direction:
+    Direction d = Direction(NDIM - 1);
+    move_filtered(S, bcmsid, d, ALL, false, Sd, p);
+    onsites(ALL) {
+        im += p.kappa * S[0][X].dot(im_muMdmu*Sd[X]); //Imaginary part
+        re += p.kappa * S[0][X].dot(re_muMdmu*Sd[X]); //Real part
+        phase_i += -p.kappa * S[0][X].dot(p.im_muM*Sd[X]); //Phase factor
+    }
+    cf niR=(re.value()+I*im.value())*expi(phase_i.value());
+    return niR;
+}
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
 double measure_ds_dalpha(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
@@ -1500,6 +1536,8 @@ int main(int argc, char **argv) {
     p.n_therm = par.get("thermalization trajs");
     // number of alpha-interpolation steps
     p.n_interp_steps = par.get("interpolation steps");
+    // number of trajectories per phase dump
+    p.n_dump_mes=par.get("trajs/mes dump");
     // number of trajectories per correlator dump
     p.n_dump_corr = par.get("trajs/corr dump");
     // number of trajectories per configuration dump
@@ -1630,7 +1668,15 @@ int main(int argc, char **argv) {
             av_corr_vs_dist[ic] = 0;
         }
     }
-
+    // parameter for computing the average phase
+    ftype av_phase=0.0;
+    std::string phase_ofile_name;
+    phase_ofile_name=output_fname+"_phase.bout";
+    std::vector<double> comp_vec(2, 0);
+    cf av_ni(0.0,0.0);
+    std::string ni_fname;
+    ni_fname=output_fname+"_ni.bout";
+    std::vector<double> ni_vec(2, 0);
     // use negative trajectory for thermal
     int start_traj = -p.n_therm;
 
@@ -1730,6 +1776,7 @@ int main(int argc, char **argv) {
     }
     bool first = true;
     bool first_corr = true;
+    bool first_phase=true;
     for (int trajectory = start_traj; trajectory <= p.n_traj; ++trajectory) {
 
         ftype ttime = hila::gettime();
@@ -1747,6 +1794,7 @@ int main(int argc, char **argv) {
         measure_stuff(S, bcmsid, p);
 
         if (p.s > 1 && trajectory >= 0) {
+            // Measurements done with replicas
             if (p.n_interp_steps > 0) {
                 std::vector<double> ds(2, 0);
                 do_bc_measure(S, bcmsid, p, ds,false);
@@ -1806,6 +1854,36 @@ int main(int argc, char **argv) {
                     first_corr = false;
                 }
             }   
+        }
+        
+        if (trajectory>=0) {
+            //Measurements that are done with or without replicas
+            if (p.n_dump_mes) {
+                // Measure the imaginary part of the action and add it to the sum.
+                ftype s_im=measure_s_im(S,bcmsid,p);
+                av_phase+=s_im;
+
+                // Measure the charge density times the phase factor and add it to the sum
+                cf ni=measure_ni(S,bcmsid,p);
+                av_ni+=ni;
+                // Every n_dump_phase, the average is computed and stored in a file.
+                if((trajectory + 1) % p.n_dump_mes == 0) {
+                    //Phase
+                    int imdump=(trajectory+1)/p.n_dump_mes;
+                    av_phase/=p.n_dump_mes;
+                    comp_vec[0]=cos(av_phase); //Real part
+                    comp_vec[1]=sin(av_phase); //Imaginary part
+                    bwrite_to_file(phase_ofile_name,comp_vec,p,imdump,first_phase);
+                    av_phase=0.0;
+                    //ni
+                    av_ni/=p.n_dump_mes;
+                    comp_vec[0]=av_ni.re; //Real part
+                    comp_vec[1]=av_ni.im; // Imaginary part
+                    bwrite_to_file(ni_fname,comp_vec,p,imdump,first_phase);
+                    av_ni=cf(0.0,0.0);
+                    first_phase=false;
+                }
+            }
         }
 
         hila::out0 << "Measure_end " << trajectory << '\n';

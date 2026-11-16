@@ -14,8 +14,9 @@ update algorithm       0
 number of trajectories 10000
 updates per traj       150
 number of hits         1
-thermalization trajs   500
+thermalization trajs   200
 interpolation steps    200
+trajs/mes dump         100
 trajs/corr dump        0
 trajs/config dump      0
 random seed            0
