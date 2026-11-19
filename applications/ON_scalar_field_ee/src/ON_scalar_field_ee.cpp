@@ -829,18 +829,15 @@ double measure_s_im(const Field<T> (&S)[2], const Field<pT> &bcmsid, const param
 }
 
 template <typename T, typename pT, typename atype = hila::arithmetic_type<T>>
-cf measure_ni(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
+cf measure_niR(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters &p) {
     // Measure the derivative of the action wrt to mu (real and imaginary parts)
 
     //Derivatives of the mu matrices are constructed
     fM re_muMdmu=fM(),im_muMdmu=fM();
     re_muMdmu.e(0,0)=sinh(p.mu);
     re_muMdmu.e(1,1)=sinh(p.mu);
-    for (int i=2;i<NCOLOR;i++) {
-        re_muMdmu.e(i,i)=1;
-    }
-    im_muMdmu.e(0,1)=cosh(p.mu);
-    im_muMdmu.e(1,0)=-cosh(p.mu);
+    im_muMdmu.e(0,1)=-cosh(p.mu);
+    im_muMdmu.e(1,0)=cosh(p.mu);
 
 
     Reduction<double> re = 0,im=0,phase_i=0;
@@ -856,7 +853,7 @@ cf measure_ni(const Field<T> (&S)[2], const Field<pT> &bcmsid, const parameters 
         re += p.kappa * S[0][X].dot(re_muMdmu*Sd[X]); //Real part
         phase_i += -p.kappa * S[0][X].dot(p.im_muM*Sd[X]); //Phase factor
     }
-    cf niR=(re.value()+I*im.value())*expi(phase_i.value());
+    cf niR=(re.value()+I*im.value())*expi(-phase_i.value());
     return niR;
 }
 
@@ -1617,8 +1614,8 @@ int main(int argc, char **argv) {
     for (int i=2;i<NCOLOR;i++) {
         p.re_muM.e(i,i)=1;
     }
-    p.im_muM.e(0,1)=sinh(p.mu);
-    p.im_muM.e(1,0)=-sinh(p.mu);
+    p.im_muM.e(0,1)=-sinh(p.mu);
+    p.im_muM.e(1,0)=sinh(p.mu);
 
 
 
@@ -1629,6 +1626,7 @@ int main(int argc, char **argv) {
     }
     output_fname += string_format("_h%.6f", p.kappa);
     output_fname += string_format("_lm%.6f", p.lambda);
+    output_fname += string_format("_mu%.6f", p.mu);
     output_fname += string_format("_s%.6f", p.source[0]);
     for (int ic = 1; ic < NCOLOR; ++ic) {
         output_fname += string_format("_%.6f", p.source[ic]);
@@ -1668,11 +1666,12 @@ int main(int argc, char **argv) {
             av_corr_vs_dist[ic] = 0;
         }
     }
-    // parameter for computing the average phase
+    // objects for computing the average phase
     ftype av_phase=0.0;
     std::string phase_ofile_name;
     phase_ofile_name=output_fname+"_phase.bout";
     std::vector<double> comp_vec(2, 0);
+    // objects for computing ni
     cf av_ni(0.0,0.0);
     std::string ni_fname;
     ni_fname=output_fname+"_ni.bout";
@@ -1864,7 +1863,7 @@ int main(int argc, char **argv) {
                 av_phase+=s_im;
 
                 // Measure the charge density times the phase factor and add it to the sum
-                cf ni=measure_ni(S,bcmsid,p);
+                cf ni=measure_niR(S,bcmsid,p);
                 av_ni+=ni;
                 // Every n_dump_phase, the average is computed and stored in a file.
                 if((trajectory + 1) % p.n_dump_mes == 0) {
@@ -1872,7 +1871,7 @@ int main(int argc, char **argv) {
                     int imdump=(trajectory+1)/p.n_dump_mes;
                     av_phase/=p.n_dump_mes;
                     comp_vec[0]=cos(av_phase); //Real part
-                    comp_vec[1]=sin(av_phase); //Imaginary part
+                    comp_vec[1]=-sin(av_phase); //Imaginary part
                     bwrite_to_file(phase_ofile_name,comp_vec,p,imdump,first_phase);
                     av_phase=0.0;
                     //ni
